@@ -48,10 +48,10 @@ def register():
     data = request.get_json()
 
     # Alterado para verificar o id do usuário
-    existing_user = User.query.filter_by(id=data['id']).first()
+    existing_user = User.query.filter_by(email=data['email']).first()
 
     if existing_user:
-        return jsonify({'message': 'ID já cadastrado!'}), 400
+        return jsonify({'message': 'e-mail já cadastrado!'}), 400
 
     hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
     otp_secret = pyotp.random_base32()
@@ -77,7 +77,7 @@ def verify_email():
     data = request.get_json()
 
     # Alterado para buscar pelo id ao invés do email
-    user = User.query.filter_by(email=data['email'])
+    user = User.query.filter_by(email=data['email']).first()
 
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
@@ -99,7 +99,7 @@ def resend_otp():
     data = request.get_json()
 
     # Alterado para buscar pelo id ao invés do email
-    user = User.query.filter_by(email=data['email'])
+    user = User.query.filter_by(email=data['email']).first()
 
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
@@ -208,3 +208,5 @@ def get_user_data():
     }
 
     return jsonify({'user': user_data}), 200
+ 
+ 
