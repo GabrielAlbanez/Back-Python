@@ -2,6 +2,8 @@ from config_database import db
 from datetime import datetime, timedelta, timezone
 import uuid
 from sqlalchemy import String
+from flask import current_app
+import os
 
 class User(db.Model):
     __tablename__ = 'user'  # Nome correto da tabela no banco de dados
@@ -12,9 +14,18 @@ class User(db.Model):
     email_valid = db.Column(db.Boolean, default=False)
     otp_secret = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    profile_image = db.Column(db.String(255), nullable=True)
     
     # Relacionamento com a tabela 'password_reset_token'
     reset_tokens = db.relationship('PasswordResetToken', backref='user', lazy=True)
+    
+    def update_profile_image(self, new_image_path):
+        """Remove a imagem antiga e atualiza para a nova."""
+        if self.profile_image:
+            old_path = os.path.join(current_app.config['UPLOAD_FOLDER'], self.profile_image)
+            if os.path.exists(old_path):
+                os.remove(old_path)  # Exclui a imagem antiga
+        self.profile_image = new_image_path
 
     def __init__(self, id=None, name=None, email=None, password=None, otp_secret=None, email_valid=False):
         if id is None:
