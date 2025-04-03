@@ -8,10 +8,14 @@ from flask_mail import Mail, Message
 from config import Config
 import uuid
 from datetime import datetime, timedelta, timezone
-
+import os
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 auth_bp = Blueprint('auth', __name__)
 bcrypt = Bcrypt()
 mail = Mail()
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 
 
 def send_email_verification(email, otp_code):
@@ -24,7 +28,8 @@ def send_email_verification(email, otp_code):
 def send_password_reset_email(user):
     """Função para enviar um e-mail com o link para redefinir a senha"""
     reset_token = str(uuid.uuid4())  # Gera um token único
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)  # O token expira em 1 hora
+    expires_at = datetime.now(timezone.utc) + \
+        timedelta(hours=1)  # O token expira em 1 hora
 
     # Criar o token de redefinição de senha no banco de dados
     reset_token_entry = PasswordResetToken(
@@ -53,11 +58,13 @@ def register():
     if existing_user:
         return jsonify({'message': 'e-mail já cadastrado!'}), 400
 
-    hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
+    hashed_password = bcrypt.generate_password_hash(
+        data['password']).decode('utf-8')
     otp_secret = pyotp.random_base32()
 
     # Criar um novo usuário
-    user = User(id=idRamdom, name=data['name'], email=data['email'], password=hashed_password, otp_secret=otp_secret, email_valid=False)
+    user = User(id=idRamdom, name=data['name'], email=data['email'],
+                password=hashed_password, otp_secret=otp_secret, email_valid=False)
 
     db.session.add(user)
     db.session.commit()
@@ -158,7 +165,8 @@ def reset_password(reset_token):
     data = request.get_json()
 
     # Buscar o token no banco de dados
-    reset_token_entry = PasswordResetToken.query.filter_by(token=reset_token).first()
+    reset_token_entry = PasswordResetToken.query.filter_by(
+        token=reset_token).first()
 
     if not reset_token_entry:
         return jsonify({'message': 'Token de redefinição inválido!'}), 400
@@ -175,7 +183,8 @@ def reset_password(reset_token):
 
     # Atualizar a senha do usuário
     new_password = data['password']
-    hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
+    hashed_password = bcrypt.generate_password_hash(
+        new_password).decode('utf-8')
     user.password = hashed_password
     db.session.commit()
 
@@ -208,5 +217,46 @@ def get_user_data():
     }
 
     return jsonify({'user': user_data}), 200
- 
- 
+
+
+@auth_bp.route('/auth/googlee', methods=['POST'])
+def google_login():
+    data = request.get_json()
+    token = data.get("token")
+
+    if not token:
+        return jsonify({"message": "Token não fornecido"}), 400
+
+    try:
+        # Verifica o token JWT do Google
+        id_info = id_token.verify_oauth2_token(
+            token, google_requests.Request(), GOOGLE_CLIENT_ID)
+
+        email = id_info["email"]
+        name = id_info.get("name", "")
+        profile_image = id_info.get("picture", "")
+
+        user = User.query.filter_by(email=email).first()
+
+        if not user:
+            user = User(email=email, name=name,
+                        profile_image=profile_image, email_valid=True)
+            db.session.add(user)
+            db.session.commit()
+
+        # Cria um token JWT para o usuário autenticado
+        access_token = create_access_token(identity=user.id)
+
+        return jsonify({
+            "message": "Login bem-sucedido!",
+            "access_token": access_token,
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "profile_image": user.profile_image
+            }
+        })
+
+    except ValueError:
+        return jsonify({"message": "Token inválido"}), 400
