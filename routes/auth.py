@@ -1,3 +1,5 @@
+from utility.VerfyToken import decode_google_jwt
+from models import ProviderTypeEnum
 from flask import Blueprint, request, jsonify
 from models import User, PasswordResetToken
 from config_database import db
@@ -11,11 +13,15 @@ from datetime import datetime, timedelta, timezone
 import os
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from middleware.VerifyEmailExisting import user_exist
+from datetime import datetime
+import time
 auth_bp = Blueprint('auth', __name__)
 bcrypt = Bcrypt()
 mail = Mail()
 
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+
+GOOGLE_CLIENT_ID = "911018498691-04lkb4r2c24cjdnevpnr2e266v8cho6p.apps.googleusercontent.com"
 
 
 def send_email_verification(email, otp_code):
@@ -64,7 +70,7 @@ def register():
 
     # Criar um novo usuário
     user = User(id=idRamdom, name=data['name'], email=data['email'],
-                password=hashed_password, otp_secret=otp_secret, email_valid=False)
+                password=hashed_password, otp_secret=otp_secret, email_valid=False, providerType=ProviderTypeEnum.CREDENTIALS)
 
     db.session.add(user)
     db.session.commit()
@@ -219,7 +225,8 @@ def get_user_data():
     return jsonify({'user': user_data}), 200
 
 
-@auth_bp.route('/auth/googlee', methods=['POST'])
+@auth_bp.route('/googlee', methods=['POST'])
+@user_exist()  # Middleware de verificação
 def google_login():
     data = request.get_json()
     token = data.get("token")
@@ -228,35 +235,51 @@ def google_login():
         return jsonify({"message": "Token não fornecido"}), 400
 
     try:
-        # Verifica o token JWT do Google
-        id_info = id_token.verify_oauth2_token(
-            token, google_requests.Request(), GOOGLE_CLIENT_ID)
+        # Código de validação do token
+        id_info = decode_google_jwt(token)
 
-        email = id_info["email"]
-        name = id_info.get("name", "")
-        profile_image = id_info.get("picture", "")
+        email = id_info.get("email")
+        name = id_info.get("name")
+        picture = id_info.get("picture")
 
-        user = User.query.filter_by(email=email).first()
+        # Verifica se o usuário já existe no banco
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            return jsonify({
+                "user": {
+                    "id": existing_user.id,
+                    "email": existing_user.email,
+                    "name": existing_user.name,
+                    "profile_image": existing_user.profile_image,
+                    "providerType": existing_user.providerType.name,
+                }
+            }), 200
 
-        if not user:
-            user = User(email=email, name=name,
-                        profile_image=profile_image, email_valid=True)
-            db.session.add(user)
-            db.session.commit()
-
-        # Cria um token JWT para o usuário autenticado
-        access_token = create_access_token(identity=user.id)
+        # Caso o usuário não exista, cria um novo usuário com o provedor Google
+        user = User(
+            email=email,
+            name=name,
+            password="google_user_password",  # ou alguma senha padrão
+            otp_secret="",
+            email_valid=True,
+            profile_image=picture,
+            providerType=ProviderTypeEnum.google
+        )
+        db.session.add(user)
+        db.session.commit()
 
         return jsonify({
-            "message": "Login bem-sucedido!",
-            "access_token": access_token,
             "user": {
                 "id": user.id,
-                "name": user.name,
                 "email": user.email,
-                "profile_image": user.profile_image
+                "name": user.name,
+                "profile_image": user.profile_image,
+                "providerType": user.providerType.name,
             }
-        })
+        }), 200
 
-    except ValueError:
+    except ValueError as e:
         return jsonify({"message": "Token inválido"}), 400
+
+    except Exception as e:
+        return jsonify({"message": "Erro ao validar o token"}), 400
