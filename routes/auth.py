@@ -47,13 +47,14 @@ def send_password_reset_email(user):
     db.session.commit()
 
     # Enviar o e-mail com o link
-    reset_link = f"http://example.com/reset-password/{reset_token}"
+    reset_link = f"https://rest-password-page-next.vercel.app/reset-password/token={reset_token}"
     msg = Message("Redefinir Senha", recipients=[user.email])
     msg.body = f"Para redefinir sua senha, clique no link abaixo:\n\n{reset_link}"
     mail.send(msg)
 
 
 @auth_bp.route('/register', methods=['POST'])
+@user_exist()
 def register():
     idRamdom = str(uuid.uuid4())  # Gerar ID único
     data = request.get_json()
@@ -67,16 +68,17 @@ def register():
     hashed_password = bcrypt.generate_password_hash(
         data['password']).decode('utf-8')
     otp_secret = pyotp.random_base32()
+    print(list(ProviderTypeEnum))
 
     # Criar um novo usuário
     user = User(id=idRamdom, name=data['name'], email=data['email'],
-                password=hashed_password, otp_secret=otp_secret, email_valid=False, providerType=ProviderTypeEnum.CREDENTIALS)
+                password=hashed_password, otp_secret=otp_secret, email_valid=False, providerType=ProviderTypeEnum.credentials, profile_image="")
 
     db.session.add(user)
     db.session.commit()
 
     # Gerar código OTP baseado no otp_secret
-    totp = pyotp.TOTP(otp_secret)
+    totp = pyotp.TOTP(otp_secret,  interval=120)
     otp_code = totp.now()
 
     # Enviar código por email
@@ -88,6 +90,7 @@ def register():
 @auth_bp.route('/verify-email', methods=['POST'])
 def verify_email():
     data = request.get_json()
+    print(f"verify-email : email-req -  {data['email']} - otp-req - {data['otp']}")
 
     # Alterado para buscar pelo id ao invés do email
     user = User.query.filter_by(email=data['email']).first()
@@ -98,6 +101,10 @@ def verify_email():
         return jsonify({'message': 'Email já validado!'}), 400
 
     totp = pyotp.TOTP(user.otp_secret, interval=120)
+    
+    print(f"user encontrado : {user}")
+    print(f" codigo otp pegod do user : {user.otp_secret}")
+    print(f"codigo otp gerado : {totp.now()}")
 
     if totp.verify(data['otp']):  # ✅ Verifica se o OTP digitado é válido
         user.email_valid = True

@@ -7,6 +7,7 @@ def user_exist():
         @wraps(func)
         def decorated_function(*args, **kwargs):
             data = request.get_json()
+            print(f"dados vindo da req  de register : {data}")
             email = data.get('email')
             provider_type = data.get('providerType')
 
