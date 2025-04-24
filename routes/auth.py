@@ -34,8 +34,8 @@ def send_email_verification(email, otp_code):
 def send_password_reset_email(user):
     """Função para enviar um e-mail com o link para redefinir a senha"""
     reset_token = str(uuid.uuid4())  # Gera um token único
-    expires_at = datetime.now(timezone.utc) + \
-        timedelta(hours=1)  # O token expira em 1 hora
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    # O token expira em 1 hora
 
     # Criar o token de redefinição de senha no banco de dados
     reset_token_entry = PasswordResetToken(
@@ -47,7 +47,7 @@ def send_password_reset_email(user):
     db.session.commit()
 
     # Enviar o e-mail com o link
-    reset_link = f"https://rest-password-page-next.vercel.app/reset-password/token={reset_token}"
+    reset_link = f"https://rest-password-page-next.vercel.app/reset-password/{reset_token}"
     msg = Message("Redefinir Senha", recipients=[user.email])
     msg.body = f"Para redefinir sua senha, clique no link abaixo:\n\n{reset_link}"
     mail.send(msg)
@@ -90,7 +90,8 @@ def register():
 @auth_bp.route('/verify-email', methods=['POST'])
 def verify_email():
     data = request.get_json()
-    print(f"verify-email : email-req -  {data['email']} - otp-req - {data['otp']}")
+    print(
+        f"verify-email : email-req -  {data['email']} - otp-req - {data['otp']}")
 
     # Alterado para buscar pelo id ao invés do email
     user = User.query.filter_by(email=data['email']).first()
@@ -101,7 +102,7 @@ def verify_email():
         return jsonify({'message': 'Email já validado!'}), 400
 
     totp = pyotp.TOTP(user.otp_secret, interval=120)
-    
+
     print(f"user encontrado : {user}")
     print(f" codigo otp pegod do user : {user.otp_secret}")
     print(f"codigo otp gerado : {totp.now()}")
@@ -172,19 +173,29 @@ def forgot_password():
 
     return jsonify({'message': 'Instruções para redefinir a senha foram enviadas para seu e-mail.'}), 200
 
-
 @auth_bp.route('/reset-password/<reset_token>', methods=['POST'])
 def reset_password(reset_token):
     data = request.get_json()
 
-    # Buscar o token no banco de dados
-    reset_token_entry = PasswordResetToken.query.filter_by(
-        token=reset_token).first()
+    print(f"data vindo front {data}")
+    print(f"reset_token vindo front {reset_token}")
+    print(f"Body recebido: {request.json}")
+    print("Tokens existentes:")
+    for entry in PasswordResetToken.query.all():
+        print(entry.token)
+
+    # Normalizar o token (remover hífens do que veio da URL)
+    token_normalizado = reset_token.replace("-", "")
+
+    # Buscar o token no banco também sem hífens
+    reset_token_entry = PasswordResetToken.query.filter(
+        db.func.replace(PasswordResetToken.token, '-', '') == token_normalizado
+    ).first()
 
     if not reset_token_entry:
         return jsonify({'message': 'Token de redefinição inválido!'}), 400
 
-    # Verificar se o token expirou
+    # Verificar se o token expirou (ajustado para datetime com timezone)
     if reset_token_entry.is_expired():
         return jsonify({'message': 'Token de redefinição expirado!'}), 400
 
@@ -196,8 +207,7 @@ def reset_password(reset_token):
 
     # Atualizar a senha do usuário
     new_password = data['password']
-    hashed_password = bcrypt.generate_password_hash(
-        new_password).decode('utf-8')
+    hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
     user.password = hashed_password
     db.session.commit()
 

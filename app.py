@@ -9,11 +9,12 @@ from routes.uploadImg import upload
 from flask_mail import Mail
 from flask_migrate import Migrate
 from dotenv import load_dotenv
-
+from flask_cors import CORS
 
 
 app = Flask(__name__)
 load_dotenv()
+CORS(app)
 UPLOAD_FOLDER = 'static/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 app.config.from_object(Config)

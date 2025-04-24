@@ -58,7 +58,7 @@ class PasswordResetToken(db.Model):
 
     token = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
-    expires_at = db.Column(db.DateTime, nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
 
     def is_expired(self):
         return datetime.now(tz=timezone.utc) > self.expires_at
