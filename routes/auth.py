@@ -152,8 +152,14 @@ def login():
 
     if bcrypt.check_password_hash(user.password, data['password']):
         # Gerar JWT após login bem-sucedido com o ID do usuário
-        access_token = create_access_token(identity=user.id)
-        return jsonify({'message': 'Login bem-sucedido!', 'access_token': access_token})
+        userData = {
+           'id' : user.id,
+           'name' : user.name,
+           'email' : user.email,
+           'profile_image' : user.profile_image,
+           'provedorType' : user.providerType.name
+        }
+        return jsonify({'message': 'Login bem-sucedido!', 'user': userData})
 
     return jsonify({'message': 'Credenciais inválidas!'}), 401
 
