@@ -19,34 +19,27 @@ def upload_profile_image(user_id):
     """Rota para upload de imagem de perfil."""
     print(f"User ID recebido: {user_id}")
 
-    # Buscar usuário no banco
     user = User.query.get(user_id)
     if not user:
         return jsonify({'message': 'Usuário não encontrado'}), 404
 
-    # Buscar o arquivo enviado
     file = request.files.get('file')
-    if file is None:
-        return jsonify({'message': 'Nenhum arquivo enviado'}), 400
-
-    if file.filename == '':
+    if file is None or file.filename == '':
         return jsonify({'message': 'Nenhuma imagem selecionada'}), 400
 
     if not allowed_file(file.filename):
         return jsonify({'message': 'Formato de arquivo não permitido'}), 400
 
-    # Gerar nome único para a imagem
     filename = secure_filename(file.filename)
     unique_filename = f"{uuid.uuid4()}_{filename}"
 
-    # Pasta de uploads
     upload_folder = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(upload_folder):
         os.makedirs(upload_folder)
 
     file_path = os.path.join(upload_folder, unique_filename)
 
-    # Deletar imagem anterior se existir
+    # Deletar imagem anterior
     if user.profile_image:
         old_image_path = os.path.join(upload_folder, user.profile_image)
         if os.path.exists(old_image_path):
@@ -59,7 +52,22 @@ def upload_profile_image(user_id):
     user.profile_image = unique_filename
     db.session.commit()
 
-    # ✅ Retornar só o nome da imagem no response
+    # 🔥 Remover imagens órfãs
+    try:
+        all_images = set(os.listdir(upload_folder))
+        used_images = set(
+            i[0] for i in db.session.query(User.profile_image).filter(User.profile_image.isnot(None)).all()
+        )
+
+        orphan_images = all_images - used_images
+        for img in orphan_images:
+            img_path = os.path.join(upload_folder, img)
+            if os.path.isfile(img_path):
+                os.remove(img_path)
+
+    except Exception as e:
+        print(f"Erro ao remover imagens órfãs: {e}")
+
     return jsonify({
         "message": "Imagem de perfil atualizada com sucesso",
         "image_name": unique_filename
