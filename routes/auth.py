@@ -24,6 +24,13 @@ mail = Mail()
 GOOGLE_CLIENT_ID = "911018498691-04lkb4r2c24cjdnevpnr2e266v8cho6p.apps.googleusercontent.com"
 
 
+def send_password_reset_otp(email, otp_code):
+    """Função para enviar email com o código de redefinição de senha (OTP)"""
+    msg = Message("Redefinir senha - Código OTP", recipients=[email])
+    msg.body = f"Seu código de redefinição de senha é: {otp_code}. Ele expira em 2 minutos."
+    mail.send(msg)
+
+
 def send_email_verification(email, otp_code):
     """Função para enviar email com o código OTP"""
     msg = Message("Confirme seu email - Código OTP", recipients=[email])
@@ -153,11 +160,11 @@ def login():
     if bcrypt.check_password_hash(user.password, data['password']):
         # Gerar JWT após login bem-sucedido com o ID do usuário
         userData = {
-           'id' : user.id,
-           'name' : user.name,
-           'email' : user.email,
-           'profile_image' : user.profile_image,
-           'provedorType' : user.providerType.name
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'profile_image': user.profile_image,
+            'provedorType': user.providerType.name
         }
         return jsonify({'message': 'Login bem-sucedido!', 'user': userData})
 
@@ -168,60 +175,56 @@ def login():
 def forgot_password():
     data = request.get_json()
 
-    # Alterado para buscar pelo email ao invés do id
     user = User.query.filter_by(email=data['email']).first()
 
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
 
-    # Enviar e-mail com o link para redefinir a senha
-    send_password_reset_email(user)
+    # Gerar novo OTP
+    otp_secret = user.otp_secret
+    if not otp_secret:
+        otp_secret = pyotp.random_base32()
+        user.otp_secret = otp_secret
+        db.session.commit()
 
-    return jsonify({'message': 'Instruções para redefinir a senha foram enviadas para seu e-mail.'}), 200
+    totp = pyotp.TOTP(otp_secret, interval=120)
+    otp_code = totp.now()
 
-@auth_bp.route('/reset-password/<reset_token>', methods=['POST'])
-def reset_password(reset_token):
+    # Enviar o OTP para o email
+    send_password_reset_otp(user.email, otp_code)
+
+    return jsonify({'message': 'Código OTP enviado para redefinir a senha.'}), 200
+
+
+
+
+@auth_bp.route('/verify-password-code', methods=['POST'])
+def verify_password_code():
     data = request.get_json()
+    email = data.get('email')
+    otp = data.get('otp')
+    new_password = data.get('new_password')
 
-    print(f"data vindo front {data}")
-    print(f"reset_token vindo front {reset_token}")
-    print(f"Body recebido: {request.json}")
-    print("Tokens existentes:")
-    for entry in PasswordResetToken.query.all():
-        print(entry.token)
-
-    # Normalizar o token (remover hífens do que veio da URL)
-    token_normalizado = reset_token.replace("-", "")
-
-    # Buscar o token no banco também sem hífens
-    reset_token_entry = PasswordResetToken.query.filter(
-        db.func.replace(PasswordResetToken.token, '-', '') == token_normalizado
-    ).first()
-
-    if not reset_token_entry:
-        return jsonify({'message': 'Token de redefinição inválido!'}), 400
-
-    # Verificar se o token expirou (ajustado para datetime com timezone)
-    if reset_token_entry.is_expired():
-        return jsonify({'message': 'Token de redefinição expirado!'}), 400
-
-    # Buscar o usuário associado ao token
-    user = User.query.filter_by(id=reset_token_entry.user_id).first()
+    user = User.query.filter_by(email=email).first()
 
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
 
-    # Atualizar a senha do usuário
-    new_password = data['password']
-    hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
-    user.password = hashed_password
-    db.session.commit()
+    if not user.otp_secret:
+        return jsonify({'message': 'OTP não foi solicitado!'}), 400
 
-    # Remover o token de redefinição após o uso
-    db.session.delete(reset_token_entry)
-    db.session.commit()
+    totp = pyotp.TOTP(user.otp_secret, interval=120)
 
-    return jsonify({'message': 'Senha redefinida com sucesso!'}), 200
+    if totp.verify(otp):
+        hashed_password = bcrypt.generate_password_hash(
+            new_password).decode('utf-8')
+        user.password = hashed_password
+        db.session.commit()
+        return jsonify({'message': 'Senha redefinida com sucesso!'}), 200
+    else:
+        return jsonify({'message': 'Código OTP inválido ou expirado!'}), 400
+
+
 
 
 @auth_bp.route('/get-user-data', methods=['GET'])
