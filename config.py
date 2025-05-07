@@ -8,6 +8,9 @@ class Config:
     SQLALCHEMY_DATABASE_URI = 'postgresql://postgres:NovaSenha123@localhost:5432/Python_db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_SECRET_KEY = 'supersecretkey'
+    REFRESH_SECRET_KEY="supersecretkey"
+    ACCESS_SECRET_KEY="supersecretkey"
+    
 
 
     # Configuração do servidor SMTP

@@ -1,10 +1,11 @@
 from utility.VerfyToken import decode_google_jwt
 from models import ProviderTypeEnum
 from flask import Blueprint, request, jsonify
-from models import User, PasswordResetToken
+from werkzeug.exceptions import HTTPException
+from models import User, PasswordResetToken, RefreshToken
 from config_database import db
 from flask_bcrypt import Bcrypt
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity
 import pyotp
 from flask_mail import Mail, Message
 from config import Config
@@ -15,7 +16,14 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from middleware.VerifyEmailExisting import user_exist
 from datetime import datetime
+from middleware.VerifyExisitingToken import token_required
 import time
+import jwt
+from jwt import PyJWTError as JWTError
+from utility.Tokens.TokensGen import generate_access_token, generate_refresh_token
+from utility.Tokens.TokensDecode import decode_access_token, decode_refresh_token
+
+
 auth_bp = Blueprint('auth', __name__)
 bcrypt = Bcrypt()
 mail = Mail()
@@ -147,28 +155,52 @@ def resend_otp():
 @auth_bp.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-
-    # Alterado para buscar pelo email ao invés do id
     user = User.query.filter_by(email=data['email']).first()
-
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
-
     if not user.email_valid:
         return jsonify({'message': 'Email ainda não validado! Verifique seu email.'}), 403
-
     if bcrypt.check_password_hash(user.password, data['password']):
-        # Gerar JWT após login bem-sucedido com o ID do usuário
-        userData = {
-            'id': user.id,
-            'name': user.name,
-            'email': user.email,
-            'profile_image': user.profile_image,
-            'provedorType': user.providerType.name
-        }
-        return jsonify({'message': 'Login bem-sucedido!', 'user': userData})
-
+        access_token = generate_access_token(user.id)
+        refresh_token = generate_refresh_token(user.id)
+        new_refresh_token = RefreshToken(
+            id=str(uuid.uuid4()),
+            token=refresh_token,
+            user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
+        )
+        db.session.add(new_refresh_token)
+        db.session.commit()
+        return jsonify({
+            'message': 'Login bem-sucedido!',
+            'access_token': access_token,
+            'refresh_token': refresh_token
+        })
     return jsonify({'message': 'Credenciais inválidas!'}), 401
+
+
+@auth_bp.route("/refresh", methods=["POST"])
+def refresh_token():
+    data = request.get_json()
+    refresh_token = data.get('refresh_token')
+    if not refresh_token:
+        return jsonify({"message": "Refresh token ausente."}), 400
+    user_id = decode_refresh_token(refresh_token)
+    if not user_id:
+        return jsonify({"message": "Refresh token inválido ou expirado."}), 401
+    db_token = db.session.query(RefreshToken).filter_by(
+        token=refresh_token).first()
+    if not db_token:
+        return jsonify({"message": "Refresh token não encontrado."}), 401
+    if db_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        db.session.delete(db_token)
+        db.session.commit()
+        return jsonify({"message": "Refresh token expirado."}), 401
+    new_access_token = generate_access_token(user_id)
+    return jsonify({
+        "message": "Novo access token gerado.",
+        "access_token": new_access_token
+    }), 200
 
 
 @auth_bp.route('/forgot-password', methods=['POST'])
@@ -194,8 +226,6 @@ def forgot_password():
     send_password_reset_otp(user.email, otp_code)
 
     return jsonify({'message': 'Código OTP enviado para redefinir a senha.'}), 200
-
-
 
 
 @auth_bp.route('/verify-password-code', methods=['POST'])
@@ -225,34 +255,23 @@ def verify_password_code():
         return jsonify({'message': 'Código OTP inválido ou expirado!'}), 400
 
 
-
-
 @auth_bp.route('/get-user-data', methods=['GET'])
-@jwt_required()
-def get_user_data():
-    # Obtém o ID do usuário do JWT
-    user_id = get_jwt_identity()
-
-    # Recupera todos os dados do usuário usando o ID
+@token_required
+def get_user_data(user_id):
     user = User.query.get(user_id)
-
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
-
-    # Retorna os dados do usuário
-    user_data = {
+    userData = {
         'id': user.id,
         'name': user.name,
         'email': user.email,
-        'email_valid': user.email_valid,
-        'created_at': user.created_at,
+        'profile_image': user.profile_image,
+        'provedorType': user.providerType.name
     }
+    return jsonify({'user': userData}), 200
 
-    return jsonify({'user': user_data}), 200
 
-
-@auth_bp.route('/googlee', methods=['POST'])
-@user_exist()  # Middleware de verificação
+@auth_bp.route('/google', methods=['POST'])
 def google_login():
     data = request.get_json()
     token = data.get("token")
@@ -261,16 +280,30 @@ def google_login():
         return jsonify({"message": "Token não fornecido"}), 400
 
     try:
-        # Código de validação do token
+        # Decodificar e validar o token do Google
         id_info = decode_google_jwt(token)
 
         email = id_info.get("email")
         name = id_info.get("name")
         picture = id_info.get("picture")
 
-        # Verifica se o usuário já existe no banco
+        # Verificar se o usuário já existe
         existing_user = User.query.filter_by(email=email).first()
         if existing_user:
+            # Gerar Access Token para o usuário existente
+            access_token = generate_access_token(existing_user.id)
+            refresh_token = generate_refresh_token(existing_user.id)
+
+            # Salvar o refresh token no banco de dados
+            new_refresh_token = RefreshToken(
+                token=refresh_token,
+                user_id=existing_user.id,
+                expires_at=datetime.now(timezone.utc) +
+                timedelta(days=7)  # Válido por 7 dias
+            )
+            db.session.add(new_refresh_token)
+            db.session.commit()
+
             return jsonify({
                 "user": {
                     "id": existing_user.id,
@@ -278,14 +311,16 @@ def google_login():
                     "name": existing_user.name,
                     "profile_image": existing_user.profile_image,
                     "providerType": existing_user.providerType.name,
-                }
+                },
+                "access_token": access_token,
+                "refresh_token": refresh_token
             }), 200
 
-        # Caso o usuário não exista, cria um novo usuário com o provedor Google
+        # Se o usuário não existir, criar um novo
         user = User(
             email=email,
             name=name,
-            password="google_user_password",  # ou alguma senha padrão
+            password="google_user_password",  # Senha fictícia para usuários do Google
             otp_secret="",
             email_valid=True,
             profile_image=picture,
@@ -294,14 +329,30 @@ def google_login():
         db.session.add(user)
         db.session.commit()
 
+        # Gerar tokens JWT para o novo usuário
+        access_token = generate_access_token(user.id)
+        refresh_token = generate_refresh_token(user.id)
+
+        # Salvar o refresh token no banco de dados
+        new_refresh_token = RefreshToken(
+            token=refresh_token,
+            user_id=user.id,
+            expires_at=datetime.now(timezone.utc) +
+            timedelta(days=7)  # Válido por 7 dias
+        )
+        db.session.add(new_refresh_token)
+        db.session.commit()
+
         return jsonify({
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name,
-                "profile_image": user.profile_image,
-                "providerType": user.providerType.name,
-            }
+                "id": existing_user.id,
+                "email": existing_user.email,
+                "name": existing_user.name,
+                "profile_image": existing_user.profile_image,
+                "providerType": existing_user.providerType.name,
+            },
+            "access_token": access_token,
+            "refresh_token": refresh_token
         }), 200
 
     except ValueError as e:
@@ -309,3 +360,22 @@ def google_login():
 
     except Exception as e:
         return jsonify({"message": "Erro ao validar o token"}), 400
+
+
+@auth_bp.route('/verify-access-token', methods=['POST'])
+@token_required  # Usando o decorador que você criou
+def verify_access_token(user_id):
+    try:
+        # O user_id é passado pelo decorador, então não precisa pegar do cabeçalho novamente
+        user = User.query.get(user_id)
+
+        if not user:
+            return jsonify({'message': 'Usuário não encontrado!'}), 404
+
+        # Retorna uma mensagem de sucesso com o status do token
+        return jsonify({
+            'message': 'Token válido!',
+        }), 200
+
+    except Exception as e:
+        return jsonify({'message': 'Erro ao verificar o token', 'error': str(e)}), 400
