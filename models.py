@@ -37,6 +37,8 @@ class User(db.Model):
     profile_image = db.Column(db.String(255), nullable=False)
     # Alterado para nullable=False
     providerType = db.Column(provider_type_enum, nullable=False)
+    
+    biometric = db.Column(db.Boolean, nullable=False, default=False)
 
     reset_tokens = db.relationship(
         'PasswordResetToken', backref='user', lazy=True)
@@ -51,7 +53,7 @@ class User(db.Model):
                 os.remove(old_path)
         self.profile_image = new_image_path
 
-    def __init__(self, id=None, name=None, email=None, password=None, otp_secret=None, email_valid=False, profile_image=None, providerType=None):
+    def __init__(self, id=None, name=None, email=None, password=None, otp_secret=None, email_valid=False, profile_image=None, providerType=None, biometric=None):
         if id is None:
             self.id = str(uuid.uuid4())
         self.name = name
@@ -61,6 +63,7 @@ class User(db.Model):
         self.email_valid = email_valid
         self.profile_image = profile_image  # Agora aceita esse argumento
         self.providerType = providerType
+        self.biometric = biometric
 
 
 class PasswordResetToken(db.Model):

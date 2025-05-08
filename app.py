@@ -10,6 +10,8 @@ from flask_mail import Mail
 from flask_migrate import Migrate
 from dotenv import load_dotenv
 from flask_cors import CORS
+from sqlalchemy import text
+
 
 
 app = Flask(__name__)
@@ -37,6 +39,11 @@ print(f"PORT: {PORT}")
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        try:
+            db.session.execute(text("SELECT 1"))
+            print("✅ Conexão com o banco de dados estabelecida com sucesso!")
+        except Exception as e:
+            print("❌ Erro ao conectar com o banco de dados:", e)
     app.run(host='0.0.0.0', port=PORT, debug=True)
     
     

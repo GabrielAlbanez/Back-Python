@@ -87,7 +87,7 @@ def register():
 
     # Criar um novo usuário
     user = User(id=idRamdom, name=data['name'], email=data['email'],
-                password=hashed_password, otp_secret=otp_secret, email_valid=False, providerType=ProviderTypeEnum.credentials, profile_image="")
+                password=hashed_password, otp_secret=otp_secret, email_valid=False, providerType=ProviderTypeEnum.credentials, profile_image="",biometric=False)
 
     db.session.add(user)
     db.session.commit()
@@ -153,6 +153,7 @@ def resend_otp():
 
 
 @auth_bp.route('/login', methods=['POST'])
+@user_exist()
 def login():
     data = request.get_json()
     user = User.query.filter_by(email=data['email']).first()
@@ -184,6 +185,7 @@ def login():
                 "name": user.name,
                 "profile_image": user.profile_image,
                 "providerType": user.providerType.name,
+                "biometric": user.biometric
             },
             'message': 'Login bem-sucedido!',
             'access_token': access_token,
@@ -279,12 +281,14 @@ def get_user_data(user_id):
         'name': user.name,
         'email': user.email,
         'profile_image': user.profile_image,
-        'provedorType': user.providerType.name
+        'provedorType': user.providerType.name,
+        'biometric': user.biometric
     }
     return jsonify({'user': userData}), 200
 
 
 @auth_bp.route('/google', methods=['POST'])
+@user_exist()
 def google_login():
     data = request.get_json()
     token = data.get("token")
@@ -328,6 +332,7 @@ def google_login():
                     "name": existing_user.name,
                     "profile_image": existing_user.profile_image,
                     "providerType": existing_user.providerType.name,
+                    "biometric": existing_user.biometric
                 },
                 "access_token": access_token,
                 "refresh_token": refresh_token
@@ -341,7 +346,8 @@ def google_login():
             otp_secret="",
             email_valid=True,
             profile_image=picture,
-            providerType=ProviderTypeEnum.google
+            providerType=ProviderTypeEnum.google,
+            biometric=False
         )
         db.session.add(user)
         db.session.commit()
@@ -373,6 +379,7 @@ def google_login():
                 "name": existing_user.name,
                 "profile_image": existing_user.profile_image,
                 "providerType": existing_user.providerType.name,
+                'biometric': existing_user.biometric
             },
             "access_token": access_token,
             "refresh_token": refresh_token
@@ -402,3 +409,26 @@ def verify_access_token(user_id):
 
     except Exception as e:
         return jsonify({'message': 'Erro ao verificar o token', 'error': str(e)}), 400
+
+
+@auth_bp.route('/user/settings/<string:user_id>/biometric', methods=['PATCH'])
+@token_required
+def update_user_biometric(user_id):
+    current_user_id = get_jwt_identity()
+
+    # Garantir que o usuário só pode atualizar seu próprio dado
+    if current_user_id != user_id:
+        return jsonify({'message': 'Acesso não autorizado!'}), 403
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'Usuário não encontrado!'}), 404
+
+    data = request.get_json()
+    if 'biometric' not in data:
+        return jsonify({'message': 'Campo "biometric_enabled" é obrigatório!'}), 400
+
+    user.biometric = data['biometric']
+    db.session.commit()
+
+    return jsonify({'message': 'Configuração de biometria atualizada com sucesso!'}), 200

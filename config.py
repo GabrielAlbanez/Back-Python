@@ -5,7 +5,7 @@ load_dotenv()
 
 
 class Config:
-    SQLALCHEMY_DATABASE_URI = 'postgresql://postgres:NovaSenha123@localhost:5432/Python_db'
+    SQLALCHEMY_DATABASE_URI = 'postgresql://python-Db_owner:npg_ZX1BDtbwF0TM@ep-sparkling-pond-a4oc6c76-pooler.us-east-1.aws.neon.tech/python-Db?sslmode=require'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_SECRET_KEY = 'supersecretkey'
     REFRESH_SECRET_KEY="supersecretkey"
