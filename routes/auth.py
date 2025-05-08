@@ -162,16 +162,29 @@ def login():
         return jsonify({'message': 'Email ainda não validado! Verifique seu email.'}), 403
     if bcrypt.check_password_hash(user.password, data['password']):
         access_token = generate_access_token(user.id)
-        refresh_token = generate_refresh_token(user.id)
-        new_refresh_token = RefreshToken(
-            id=str(uuid.uuid4()),
-            token=refresh_token,
-            user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
-        )
-        db.session.add(new_refresh_token)
-        db.session.commit()
+
+        if existingRefreshToken := RefreshToken.query.filter_by(user_id=user.id).first():
+            # Se o refresh token já existe, retorna o existente
+            refresh_token = existingRefreshToken.token
+        else:
+            # Caso contrário, cria um novo refresh token
+            refresh_token = generate_refresh_token(user.id)
+            new_refresh_token = RefreshToken(
+                token=refresh_token,
+                user_id=user.id,
+                expires_at=datetime.now(timezone.utc) +
+                timedelta(days=7)  # Válido por 7 dias
+            )
+            db.session.add(new_refresh_token)
+            db.session.commit()
         return jsonify({
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "profile_image": user.profile_image,
+                "providerType": user.providerType.name,
+            },
             'message': 'Login bem-sucedido!',
             'access_token': access_token,
             'refresh_token': refresh_token
@@ -294,15 +307,19 @@ def google_login():
             access_token = generate_access_token(existing_user.id)
             refresh_token = generate_refresh_token(existing_user.id)
 
-            # Salvar o refresh token no banco de dados
-            new_refresh_token = RefreshToken(
-                token=refresh_token,
-                user_id=existing_user.id,
-                expires_at=datetime.now(timezone.utc) +
-                timedelta(days=7)  # Válido por 7 dias
-            )
-            db.session.add(new_refresh_token)
-            db.session.commit()
+            if existingRefreshToken := RefreshToken.query.filter_by(user_id=existing_user.id).first():
+                # Se o refresh token já existe, retorna o existente
+                refresh_token = existingRefreshToken.token
+            else:
+                # Caso contrário, cria um novo refresh token
+                new_refresh_token = RefreshToken(
+                    token=refresh_token,
+                    user_id=existing_user.id,
+                    expires_at=datetime.now(timezone.utc) +
+                    timedelta(days=7)  # Válido por 7 dias
+                )
+                db.session.add(new_refresh_token)
+                db.session.commit()
 
             return jsonify({
                 "user": {
@@ -331,17 +348,23 @@ def google_login():
 
         # Gerar tokens JWT para o novo usuário
         access_token = generate_access_token(user.id)
-        refresh_token = generate_refresh_token(user.id)
 
         # Salvar o refresh token no banco de dados
-        new_refresh_token = RefreshToken(
-            token=refresh_token,
-            user_id=user.id,
-            expires_at=datetime.now(timezone.utc) +
-            timedelta(days=7)  # Válido por 7 dias
-        )
-        db.session.add(new_refresh_token)
-        db.session.commit()
+        if existingRefreshToken := RefreshToken.query.filter_by(user_id=existing_user.id).first():
+            # Se o refresh token já existe, retorna o existente
+            refresh_token = existingRefreshToken.token
+        else:
+            # Caso contrário, cria um novo refresh token
+            refresh_token = generate_refresh_token(user.id)
+
+            new_refresh_token = RefreshToken(
+                token=refresh_token,
+                user_id=existing_user.id,
+                expires_at=datetime.now(timezone.utc) +
+                timedelta(days=7)  # Válido por 7 dias
+            )
+            db.session.add(new_refresh_token)
+            db.session.commit()
 
         return jsonify({
             "user": {
