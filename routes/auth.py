@@ -226,6 +226,9 @@ def forgot_password():
 
     if not user:
         return jsonify({'message': 'Usuário não encontrado!'}), 404
+    
+    if user.providerType != ProviderTypeEnum.credentials:
+        return jsonify({'message': 'Este Usuário não pode redefinir a senha!'}), 403
 
     # Gerar novo OTP
     otp_secret = user.otp_secret
@@ -411,10 +414,10 @@ def verify_access_token(user_id):
         return jsonify({'message': 'Erro ao verificar o token', 'error': str(e)}), 400
 
 
-@auth_bp.route('/user/settings/<string:user_id>/biometric', methods=['PATCH'])
+@auth_bp.route('/user/settings/biometric', methods=['POST'])
 @token_required
 def update_user_biometric(user_id):
-    current_user_id = get_jwt_identity()
+    current_user_id = user_id
 
     # Garantir que o usuário só pode atualizar seu próprio dado
     if current_user_id != user_id:
