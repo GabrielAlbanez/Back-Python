@@ -164,19 +164,28 @@ def login():
     if bcrypt.check_password_hash(user.password, data['password']):
         access_token = generate_access_token(user.id)
 
-        if existingRefreshToken := RefreshToken.query.filter_by(user_id=user.id).first():
-            # Se o refresh token já existe, retorna o existente
-            refresh_token = existingRefreshToken.token
+        existing_token = RefreshToken.query.filter_by(user_id=user.id).first()
+
+        if existing_token:
+            # Verifica se o token já expirou
+            if existing_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+                # Token expirado → gera novo
+                refresh_token = generate_refresh_token(user.id)
+                existing_token.token = refresh_token
+                existing_token.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+                db.session.commit()
+            else:
+                # Token ainda válido → reutiliza
+                refresh_token = existing_token.token
         else:
-            # Caso contrário, cria um novo refresh token
+            # Nenhum token existente → cria novo
             refresh_token = generate_refresh_token(user.id)
-            new_refresh_token = RefreshToken(
+            new_token = RefreshToken(
                 token=refresh_token,
                 user_id=user.id,
-                expires_at=datetime.now(timezone.utc) +
-                timedelta(days=7)  # Válido por 7 dias
+                expires_at=datetime.now(timezone.utc) + timedelta(days=7)
             )
-            db.session.add(new_refresh_token)
+            db.session.add(new_token)
             db.session.commit()
         return jsonify({
             "user": {
@@ -198,6 +207,7 @@ def login():
 def refresh_token():
     data = request.get_json()
     refresh_token = data.get('refresh_token')
+    print(refresh_token)
     if not refresh_token:
         return jsonify({"message": "Refresh token ausente."}), 400
     user_id = decode_refresh_token(refresh_token)
@@ -300,7 +310,6 @@ def google_login():
         return jsonify({"message": "Token não fornecido"}), 400
 
     try:
-        # Decodificar e validar o token do Google
         id_info = decode_google_jwt(token)
 
         email = id_info.get("email")
@@ -310,22 +319,25 @@ def google_login():
         # Verificar se o usuário já existe
         existing_user = User.query.filter_by(email=email).first()
         if existing_user:
-            # Gerar Access Token para o usuário existente
-            access_token = generate_access_token(existing_user.id)
-            refresh_token = generate_refresh_token(existing_user.id)
+            access_token = generate_access_token(existing_user.id)  # <- Faltava isso
 
-            if existingRefreshToken := RefreshToken.query.filter_by(user_id=existing_user.id).first():
-                # Se o refresh token já existe, retorna o existente
-                refresh_token = existingRefreshToken.token
+            existing_token = RefreshToken.query.filter_by(user_id=existing_user.id).first()
+            if existing_token:
+                if existing_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+                    refresh_token = generate_refresh_token(existing_user.id)
+                    existing_token.token = refresh_token
+                    existing_token.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+                    db.session.commit()
+                else:
+                    refresh_token = existing_token.token
             else:
-                # Caso contrário, cria um novo refresh token
-                new_refresh_token = RefreshToken(
+                refresh_token = generate_refresh_token(existing_user.id)
+                new_token = RefreshToken(
                     token=refresh_token,
                     user_id=existing_user.id,
-                    expires_at=datetime.now(timezone.utc) +
-                    timedelta(days=7)  # Válido por 7 dias
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=7)
                 )
-                db.session.add(new_refresh_token)
+                db.session.add(new_token)
                 db.session.commit()
 
             return jsonify({
@@ -341,11 +353,11 @@ def google_login():
                 "refresh_token": refresh_token
             }), 200
 
-        # Se o usuário não existir, criar um novo
+        # Criar novo usuário
         user = User(
             email=email,
             name=name,
-            password="google_user_password",  # Senha fictícia para usuários do Google
+            password="google_user_password",
             otp_secret="",
             email_valid=True,
             profile_image=picture,
@@ -355,44 +367,35 @@ def google_login():
         db.session.add(user)
         db.session.commit()
 
-        # Gerar tokens JWT para o novo usuário
         access_token = generate_access_token(user.id)
 
-        # Salvar o refresh token no banco de dados
-        if existingRefreshToken := RefreshToken.query.filter_by(user_id=existing_user.id).first():
-            # Se o refresh token já existe, retorna o existente
-            refresh_token = existingRefreshToken.token
-        else:
-            # Caso contrário, cria um novo refresh token
-            refresh_token = generate_refresh_token(user.id)
-
-            new_refresh_token = RefreshToken(
-                token=refresh_token,
-                user_id=existing_user.id,
-                expires_at=datetime.now(timezone.utc) +
-                timedelta(days=7)  # Válido por 7 dias
-            )
-            db.session.add(new_refresh_token)
-            db.session.commit()
+        # Gerar token de refresh para novo usuário
+        refresh_token = generate_refresh_token(user.id)
+        new_token = RefreshToken(
+            token=refresh_token,
+            user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
+        )
+        db.session.add(new_token)
+        db.session.commit()
 
         return jsonify({
             "user": {
-                "id": existing_user.id,
-                "email": existing_user.email,
-                "name": existing_user.name,
-                "profile_image": existing_user.profile_image,
-                "providerType": existing_user.providerType.name,
-                'biometric': existing_user.biometric
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "profile_image": user.profile_image,
+                "providerType": user.providerType.name,
+                "biometric": user.biometric
             },
             "access_token": access_token,
             "refresh_token": refresh_token
         }), 200
 
-    except ValueError as e:
+    except ValueError:
         return jsonify({"message": "Token inválido"}), 400
-
     except Exception as e:
-        return jsonify({"message": "Erro ao validar o token"}), 400
+        return jsonify({"message": f"Erro ao validar o token: {str(e)}"}), 400
 
 
 @auth_bp.route('/verify-access-token', methods=['POST'])
