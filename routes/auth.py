@@ -162,6 +162,7 @@ def login():
     if not user.email_valid:
         return jsonify({'message': 'Email ainda não validado! Verifique seu email.'}), 403
     if bcrypt.check_password_hash(user.password, data['password']):
+        
         access_token = generate_access_token(user.id)
 
         existing_token = RefreshToken.query.filter_by(user_id=user.id).first()
